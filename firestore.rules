@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if true;
+      // Users can only create their initial profile or update non-financial fields
+      allow create: if isOwner(userId)
+        && request.resource.data.virtualCreditsBalance == 5000
+        && request.resource.data.resolvedMarkets == 0
+        && request.resource.data.viralCalls == 0;
+      allow update: if isOwner(userId)
+        // Strictly prevent clients from manipulating balances, stats, or reputation
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'virtualCreditsBalance', 'resolvedMarkets', 'profitableCalls',
+          'predictionAccuracy', 'virtualROI', 'viralCalls', 'biggestCall',
+          'leaderboardRank', 'viralScore'
+        ]);
+      allow delete: if isOwner(userId);
+    }
+
+    // Markets are publicly readable, created and updated only via server endpoints
+    match /markets/{marketId} {
+      allow read: if true;
+      allow write: if false; // Only server writes using Admin SDK or server API
+    }
+
+    // Canonical content & snapshots
+    match /content/{contentId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /contentMetricSnapshots/{snapshotId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Trades are publicly readable for market volume, but strictly server-written
+    match /trades/{tradeId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User positions (read-only for position owner)
+    match /positions/{positionId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Wallet ledger (read-only for account owner)
+    match /walletLedger/{ledgerId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid);
+      allow write: if false;
+    }
+
+    // Comments
+    match /comments/{commentId} {
+      allow read: if true;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 280;
+      allow update: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'likes'])
+      );
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Comment Likes
+    match /commentLikes/{likeId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Follows
+    match /follows/{followId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.followerId == request.auth.uid;
+      allow delete: if isAuthenticated() && resource.data.followerId == request.auth.uid;
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow write: if false;
+    }
+
+    // Reports (users can submit reports)
+    match /reports/{reportId} {
+      allow create: if isAuthenticated() && request.resource.data.reporterId == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+
+    // Settlements & Admin Actions
+    match /settlements/{settlementId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /adminActions/{actionId} {
+      allow read, write: if false;
+    }
+  }
+}
